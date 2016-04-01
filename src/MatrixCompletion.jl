@@ -4,25 +4,17 @@ import NLopt
 
 export complete
 
-function add!(x::Array, y::Array)
-    for i = eachindex(x)
-        x[i] += y[i]
-    end
+function nuclear_norm{T <: AbstractFloat}(m::Matrix{T})
+    f = svdfact(m);
+    sum(f[:S])
 end
 
-function mul!(x::Array, y::Array)
-    for i = eachindex(x)
-        x[i] *= y[i]
-    end
-end
-
-function nuclear_norm{T <: AbstractFloat}(m::Matrix{T}, grad::Matrix{T})
+function d_nuclear_norm{T <: AbstractFloat}(m::Matrix{T})
     # Alt (http://math.stackexchange.com/users/123685/alt), Derivative
     # of nuclear norm, URL (version: 2015-12-29):
     # http://math.stackexchange.com/q/701104
     f = svdfact(m);
-    grad[:] = vec(f[:U] * f[:Vt]);
-    sum(f[:S])
+    f[:U] * f[:Vt];
 end
 
 type CompletionResults{T <: AbstractFloat}
@@ -39,40 +31,37 @@ function complete{T <: AbstractFloat}(m::Matrix{T}, lambda::Real;
                                       x0 = m + std(m) * randn(size(m)),
                                       maxeval = Inf, maxtime = Inf)
     sz = size(m);
-    vjes = vec(m);
 
-    vones = zeros(size(vjes));
-    # vones = spzeros(length(vjes), 1);
+    mones = zeros(sz);
     for i = eachindex(m)
         if m[i] != 0.
-            vones[i] = 1.
+            mones[i] = 1.
         end
     end
 
     function fg!(vx::Vector, grad::Vector)
         x = reshape(vx, sz);
+        z = reshape(grad, sz);
 
-        # vz = (vx - vjes) .* vones;
-        vz = vx - vjes;
-        mul!(vz, vones);
+        # z = mones .* (x - m);
+        # fn = vecnorm(z);
+        # grad[:] = vec(d_nuclear_norm(x) + (lambda/fn) * z);
+        # nuclear_norm(x) + lambda * fn
 
-        fn = vecnorm(vz);
-
-        if length(grad) > 0
-            gradm = reshape(grad, sz);
-            n = nuclear_norm(x, gradm) + lambda * fn;
-
-            # grad[:] += (lambda / fn) * vz;
-            add!(grad, (lambda / fn) * vz);
-        else
-            n = nuclear_norm(x) + lambda * fn;
-            throw(AssertionError("grad-free algorithms are slow"));
+        fn = 0.;
+        for i = eachindex(m)
+            s = mones[i] * (x[i] - m[i])
+            z[i] = s;
+            fn += s * s;
         end
+        fn = sqrt(fn);
 
-        n
+        f = svdfact(x);
+        BLAS.gemm!('N', 'N', 1., f[:U], f[:Vt], lambda / fn, z);
+        sum(f[:S]) + lambda * fn
     end
 
-    opt = NLopt.Opt(method, length(vjes));
+    opt = NLopt.Opt(method, length(m));
     NLopt.min_objective!(opt, fg!);
     NLopt.xtol_rel!(opt, tol);
     NLopt.ftol_rel!(opt, sqrt(tol));
