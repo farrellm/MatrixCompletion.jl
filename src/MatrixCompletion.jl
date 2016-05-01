@@ -45,7 +45,8 @@ function complete{T <: AbstractFloat}(m::Matrix{T}, lambda::Real;
 
         fn = 0.
         for i = eachindex(m)
-            fn += mones[i] * (x[i] - m[i])
+            s = mones[i] * (x[i] - m[i])
+            fn += s * s
         end
         fn = sqrt(fn)
 
